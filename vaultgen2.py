@@ -1,12 +1,12 @@
+import pyperclip
 import streamlit as st
 import secrets
-import time
-import random
 import string
 import hashlib
 import requests
 import re
 import math
+from io import BytesIO
 from collections import defaultdict
 
 # Configuration de la page
@@ -118,9 +118,13 @@ DEFAULT_WORDS = [
     "voiture", "ordinateur", "musique", "livre", "avion"
 ]
 
+
 class PasswordGenerator:
+    # Init Class Password Generator
     def __init__(self):
         self.hibp_cache = defaultdict(dict)
+        self.common_passwords = self.load_password_dictionary()
+        st.session_state['dict_loaded'] = True
         
     def generate_personal_password(self, base_words, length=16, use_upper=True, use_digits=True, use_symbols=True, exclude_ambiguous=False):
         """Transforme des mots personnels en mot de passe sécurisé"""
@@ -233,33 +237,128 @@ class PasswordGenerator:
         secrets.SystemRandom().shuffle(password)
         return "".join(password)
 
-    def calculate_entropy(self, password):
-        symbol_chars = "!@#$%^&*()-_=+[]{}|;:,.<>?/" 
-        charset = 0
-        if any(c.islower() for c in password): charset += 26
-        if any(c.isupper() for c in password): charset += 26  
-        if any(c.isdigit() for c in password): charset += 10
-        if any(c in symbol_chars for c in password): charset += len(symbol_chars)
-        
-        return len(password) * math.log2(charset) if charset else 0
 
-    def advanced_evaluate_strength(self, pwd, is_passphrase=False):
-        length = len(pwd)
-        categories = sum([
-            any(c.islower() for c in pwd),
-            any(c.isupper() for c in pwd),
-            any(c.isdigit() for c in pwd),
-            any(c in "!@#$%^&*" for c in pwd)
-        ])
+    def create_readable_version(self, password):
+        # Dictionnaire de substitutions pour les caractères spéciaux
+        special_char_map = {
+            '!': 'i',
+            '@': 'a',
+            '#': 'h',
+            '$': 's',
+            '%': 'p',
+            '^': 'v',
+            '&': 'n',
+            '*': 'x',
+            '(': 'c',
+            ')': 'd',
+            '-': '_',
+            '_': '-',
+            '=': 'e',
+            '+': 't',
+            '[': 'b',
+            ']': 'k',
+            '{': 'f',
+            '}': 'g',
+            '|': 'l',
+            ';': 'j',
+            ':': 'i',
+            ',': 'm',
+            '.': 'o',
+            '<': 'c',
+            '>': 'd',
+            '?': 'w',
+            '/': 'v',
+            '~': 'n',
+            '`': 'a'
+        }
         
-        entropy = self.calculate_entropy(pwd)
+        # Convertir les chiffres en mots
+        digit_map = {
+            '0': 'zero',
+            '1': 'un',
+            '2': 'deux',
+            '3': 'trois',
+            '4': 'quatre',
+            '5': 'cinq',
+            '6': 'six',
+            '7': 'sept',
+            '8': 'huit',
+            '9': 'neuf'
+        }
         
-        if length < 12 or categories < 3 or entropy < 60:
-            return "🔴 Faible", "red", "Trop faible - Changez immédiatement", "quelques minutes"
-        elif entropy < 80:
-            return "🟠 Moyen", "orange", "Acceptable mais peut être amélioré", "quelques mois"
-        else:
-            return "🟢 Fort", "green", "Robuste - Sécurité élevée", "plusieurs siècles"
+        readable_parts = []
+        for char in password:
+            if char in special_char_map:
+                readable_parts.append(f"[{special_char_map[char]}]")
+            elif char.isdigit():
+                readable_parts.append(digit_map[char])
+            else:
+                readable_parts.append(char)
+        
+        # Créer des groupes de 4 caractères séparés par des espaces
+        grouped = []
+        for i in range(0, len(readable_parts), 4):
+            group = ''.join(readable_parts[i:i+4])
+            grouped.append(group)
+        
+        return ' '.join(grouped)
+    
+
+    def calculate_entropy(self, password):
+        charset = 0
+        # Minuscules
+        if any(c.islower() for c in password): 
+            charset += 26
+        # Majuscules
+        if any(c.isupper() for c in password): 
+            charset += 26
+        # Chiffres
+        if any(c.isdigit() for c in password): 
+            charset += 10
+        # Symboles étendus
+        symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?/~"
+        if any(c in symbols for c in password):
+            charset += len(symbols)
+        
+        length = len(password)
+        entropy = length * math.log2(charset) if charset else 0
+        
+        # Pénalité pour répétitions
+        repeats = sum(1 for i in range(length-1) if password[i] == password[i+1])
+        entropy -= repeats * 0.5
+        
+        return max(0, entropy)
+
+
+    def evaluate_password_strength(self, password):
+        analysis = self.analyze_password_structure(password)
+        hibp_result = self.check_hibp_status(password)
+        
+        # Critères stricts
+        length_ok = analysis['length'] >= 14
+        variety_ok = (analysis['has_lower'] and 
+                    analysis['has_upper'] and 
+                    analysis['has_digit'] and 
+                    analysis['has_special'])
+        entropy_ok = analysis['entropy'] >= 90
+        not_compromised = not hibp_result.get('compromised', False)
+        no_patterns = not (analysis['common_patterns'] or 
+                        analysis['keyboard_patterns'])
+        
+        # Score sur 100
+        score = 0
+        if length_ok: score += 25
+        if variety_ok: score += 25 
+        if entropy_ok: score += 30
+        if not_compromised: score += 10
+        if no_patterns: score += 10
+        
+        # Ajustements finaux
+        if analysis['length'] >= 18: score += 5
+        if analysis['entropy'] >= 120: score += 5
+        if analysis['unique_chars']/analysis['length'] >= 0.9: score += 5
+        
+        return min(100, score), analysis
 
     def check_common_patterns(self, password):
         common_patterns = [
@@ -361,38 +460,107 @@ class PasswordGenerator:
         elif type_count >= 2: return 'warning'
         return 'danger'
 
+    def is_high_security(self, password):
+        score, _ = self.evaluate_password_strength(password)
+        return score >= 90
 
     def simulate_bruteforce(self, password):
-        length = len(password)
-        charset = 0
+        entropy = self.calculate_entropy(password)
+        time_to_crack = (2 ** entropy) / (1e12 * 1000)  # Hypothèse: 1 trillion de tentatives/s
         
-        if any(c.islower() for c in password): charset += 26
-        if any(c.isupper() for c in password): charset += 26
-        if any(c.isdigit() for c in password): charset += 10
-        if any(c in "!@#$%^&*" for c in password): charset += 32
-        
-        entropy = length * math.log2(charset) if charset else 0
-        time_to_crack = (2 ** entropy) / (1e9 * 1000)
+        vulnerable = time_to_crack < 31536000  # 1 an en secondes
         
         return {
-            "vulnerable": time_to_crack < 86400,
-            "reason": f"Temps estimé: {time_to_crack:.2f} secondes" if time_to_crack < 86400 else None,
-            "strength": f"Temps de crack estimé: {time_to_crack:.2e} secondes"
+            "vulnerable": vulnerable,
+            "reason": f"Temps de crack estimé: {time_to_crack:.1e} secondes" if vulnerable else None,
+            "strength": None if vulnerable else f"Résistant (>{time_to_crack:.1e} secondes)"
         }
+    
+
+    def generate_common_variations(self, password_list):
+        variations = set()
+        common_subs = {
+            'a': ['@', '4'],
+            'e': ['3'],
+            'i': ['1', '!'],
+            'o': ['0'],
+            's': ['$', '5']
+        }
+        
+        for pwd in password_list:
+            # Ajouter le mot original
+            variations.add(pwd)
+            
+            # Ajouter des versions majuscules/minuscules
+            variations.add(pwd.lower())
+            variations.add(pwd.upper())
+            variations.add(pwd.capitalize())
+            
+            # Ajouter des suffixes courants
+            for suffix in ['123', '!', '?', '2023', '1234', '1']:
+                variations.add(pwd + suffix)
+            
+            # Ajouter des substitutions
+            for char, subs in common_subs.items():
+                if char in pwd:
+                    for sub in subs:
+                        variations.add(pwd.replace(char, sub))
+        
+        return variations
+    
+
+    def load_password_dictionary(self):
+        try:
+            with open('dict.txt', 'r', encoding='utf-8', errors='ignore') as f:
+                # Utilise un set pour des recherches plus rapides
+                return {line.strip() for line in f if line.strip()}
+        except FileNotFoundError:
+            st.warning("Fichier dictionnaire.txt non trouvé - utilisation des valeurs par défaut")
+            return {
+                'password', '123456', 'qwerty', 'azerty',
+                'admin', 'welcome', 'sunshine', 'letmein'
+            }
 
     def simulate_dictionary(self, password):
-        common_passwords = [
-            "password", "123456", "qwerty", "azerty", 
-            "admin", "welcome", "sunshine", "letmein"
-        ]
+        password_lower = password.lower()
+        
+        # Vérification directe
+        if password_lower in self.common_passwords:
+            return {
+                "vulnerable": True,
+                "reason": "Mot de passe trouvé dans le dictionnaire",
+                "strength": None
+            }
+        
+        # Vérification des parties (n-grams)
+        for i in range(len(password_lower)-3):
+            substring = password_lower[i:i+4]
+            if substring in self.common_passwords:
+                return {
+                    "vulnerable": True,
+                    "reason": f"Contient une séquence vulnérable: {substring}",
+                    "strength": None
+                }
+        
+        # Vérification des substitutions
+        simple_subs = {'@':'a', '4':'a', '3':'e', '1':'i', '0':'o', '$':'s'}
+        substituted = ''.join([simple_subs.get(c, c) for c in password_lower])
+        if substituted in self.common_passwords:
+            return {
+                "vulnerable": True,
+                "reason": "Variation d'un mot de passe commun",
+                "strength": None
+            }
         
         return {
-            "vulnerable": password.lower() in common_passwords,
-            "reason": "Trouvé dans les mots de passe courants" if password.lower() in common_passwords else None,
-            "strength": "Absent des dictionnaires courants"
+            "vulnerable": False,
+            "reason": None,
+            "strength": "Résistant aux attaques par dictionnaire"
         }
 
+
     def simulate_pattern_attack(self, password):
+        """Simule une attaque par reconnaissance de motifs"""
         patterns = [
             r'1234\d*', r'qwerty.*', r'azerty.*', 
             r'\d{6}', r'[a-z]{2}\d{4}', r'\d{2}[a-z]{2}\d{2}'
@@ -483,13 +651,157 @@ class PasswordGenerator:
             "reason": f"Entropie trop faible ({entropy:.1f} bits)" if entropy < 70 else None,
             "strength": f"Entropie {status} ({entropy:.1f} bits)"
         }
+    
+
+    def simulate_hybrid(self, password):
+        """Simule une attaque hybride (combinaison de dictionnaire et de force brute)"""
+        common_words = ["password", "123456", "azerty", "qwerty", "admin", "welcome"]
+        variations = [
+            password.lower(),
+            password.lower() + "123",
+            password.lower() + "!",
+            password.lower().capitalize(),
+            password.lower().replace('a', '@').replace('e', '3')
+        ]
+        
+        for variant in variations:
+            if variant in common_words or any(word in variant for word in common_words):
+                return {
+                    "vulnerable": True,
+                    "reason": "Motif faible détecté avec variations communes",
+                    "strength": None
+                }
+        
+        return {
+            "vulnerable": False,
+            "reason": None,
+            "strength": "Résistant aux attaques hybrides"
+        }
+
+    def simulate_credstuff(self, password):
+        """Simule une attaque par credential stuffing (réutilisation de mots de passe fuits)"""
+        common_passwords = ["password123", "azerty123", "qwerty123", "welcome1"]
+        
+        return {
+            "vulnerable": password in common_passwords,
+            "reason": "Mot de passe trouvé dans des fuites connues" if password in common_passwords else None,
+            "strength": "Non trouvé dans les bases de données de fuites courantes"
+        }
+
+    def simulate_spray(self, password):
+        """Simule une attaque par password spraying (essai de mots de passe courants)"""
+        spray_passwords = [
+            "Winter2023!", "Spring2023!", "Summer2023!", "Autumn2023!",
+            "Password1", "Welcome1", "Company123", "Admin123"
+        ]
+        
+        return {
+            "vulnerable": password in spray_passwords,
+            "reason": "Mot de passe couramment utilisé dans les attaques par spray" if password in spray_passwords else None,
+            "strength": "Non vulnérable aux attaques par spray"
+        }
+
+    def simulate_entropy(self, password):
+        """Analyse l'entropie du mot de passe"""
+        entropy = self.calculate_entropy(password)
+        
+        if entropy < 50:
+            status = "Très faible"
+        elif entropy < 70:
+            status = "Faible"
+        elif entropy < 100:
+            status = "Moyenne"
+        else:
+            status = "Forte"
+        
+        return {
+            "entropy": entropy,
+            "status": status,
+            "vulnerable": entropy < 70,
+            "reason": f"Entropie trop faible ({entropy:.1f} bits)" if entropy < 70 else None,
+            "strength": f"Entropie {status} ({entropy:.1f} bits)"
+        }
+
+
+    def display_attack_results(self, results, attack_types, full_test=False):
+        vulnerable_count = sum(1 for _, r in results if r.get("vulnerable", False))
+        
+        # Création des onglets
+        tab1, tab2 = st.tabs(["Résultats détaillés", "Résumé et conseils"])
+        
+        with tab1:
+            st.subheader("Résultats des Tests")
+            
+            for item in results:
+                attack_type, result = item
+                name = attack_type if full_test else next(n for n, t in attack_types if t == attack_type)
+                
+                # Badge de statut
+                if "error" in result:
+                    badge = ":red[**ERREUR**]"
+                elif result.get("vulnerable", False):
+                    badge = ":red[**VULNÉRABLE**]"
+                else:
+                    badge = ":green[**SÉCURISÉ**]"
+                
+                st.markdown(f"##### {name} - {badge}")
+                
+                if "error" in result:
+                    st.error(result["error"], icon="⚠️")
+                elif result.get("vulnerable", False):
+                    st.error(f"**Raison:** {result.get('reason', 'Non spécifiée')}", icon="❌")
+                else:
+                    st.success(result.get("strength", "Aucune vulnérabilité détectée"), icon="✅")
+                
+                st.divider()
+        
+        with tab2:
+            st.subheader("Synthèse des résultats")
+            
+            # Score visuel
+            score = 100 - (vulnerable_count * 100 / len(results))
+            st.metric("Score de résistance", f"{score:.0f}/100")
+            st.progress(score/100)
+            
+            # Résumé des vulnérabilités
+            st.subheader("Vulnérabilités détectées")
+            if vulnerable_count == 0:
+                st.success("✅ Aucune vulnérabilité trouvée")
+            else:
+                st.error(f"❌ {vulnerable_count} vulnérabilité(s) détectée(s)")
+            
+            # Conseils personnalisés
+            st.subheader("Recommandations")
+            if vulnerable_count == 0:
+                st.success("Votre mot de passe est excellent. Conservez-le dans un gestionnaire sécurisé.")
+            elif vulnerable_count <= 2:
+                st.warning("""
+                Votre mot de passe présente quelques faiblesses :
+                - Augmentez sa longueur
+                - Ajoutez des caractères spéciaux
+                - Évitez les motifs reconnaissables
+                """)
+            else:
+                st.error("""
+                Votre mot de passe est vulnérable à plusieurs attaques :
+                - Changez-le immédiatement
+                - Utilisez notre générateur pour en créer un nouveau
+                - Ne réutilisez pas ce mot de passe ailleurs
+                """)
+            
+            # Bouton pour générer un nouveau mot de passe
+            if vulnerable_count > 0:
+                def redirect_to_generator():
+                    st.session_state.selected_tab = "Mot de Passe"
+
+                if st.button("🔄 Générer un nouveau mot de passe sécurisé", 
+                            on_click=redirect_to_generator):
+                    st.rerun()
+                
 
 # Initialisation de l'application
 generator = PasswordGenerator()
 
-# # Onglets
-# tabs = ["Mot de Passe", "ID + Mot de Passe", "Vérification", "Test de Résistance"]
-# tab = st.sidebar.radio("Navigation", tabs)
 
 if st.session_state.get("selected_tab", "Mot de Passe") == "Mot de Passe":
     st.title("🔐 Générateur de Mot de Passe")
@@ -565,36 +877,72 @@ if st.session_state.get("selected_tab", "Mot de Passe") == "Mot de Passe":
         st.session_state.is_passphrase = is_passphrase
     
     if "password" in st.session_state:
-        show_pwd = st.checkbox("Afficher le mot de passe", key="main_pwd_checkbox")
-        st.text_input(
-            "Mot de passe généré",
-            value=st.session_state.password,
-            type="default" if show_pwd else "password",
-            key="main_pwd_display"
-        )
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("📋 Copier", use_container_width=True):
-                st.session_state.copied = True
-                st.rerun()
-        
-        with col2:
-            if st.button("🔍 Vérifier sécurité", use_container_width=True):
-                st.session_state.verify_pwd = st.session_state.password
-                st.session_state.selected_tab = "Vérification"
-                st.rerun()
-        
-        with col3:
-            if st.button("⚡ Tester résistance", use_container_width=True):
-                st.session_state.attack_pwd = st.session_state.password
-                st.session_state.selected_tab = "Test de Résistance"
-                st.rerun()
-        
-        if "copied" in st.session_state:
-            st.toast("Mot de passe copié!")
-            del st.session_state.copied
+        with st.container():
+            # Première ligne : Checkbox + Champ mot de passe
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                show_pwd = st.checkbox("Afficher", key="main_pwd_checkbox")
+            with col2:
+                st.text_input(
+                    "Mot de passe généré",
+                    value=st.session_state.password,
+                    type="default" if show_pwd else "password",
+                    key="main_pwd_display",
+                    label_visibility="collapsed"
+                )
+
+            # Ajout de la version lisible
+            if st.checkbox("Afficher version lisible", key="show_readable"):
+                readable_version = generator.create_readable_version(st.session_state.password)
+                st.text_area(
+                    "Version lisible",
+                    value=readable_version,
+                    key="readable_display",
+                    height=70
+                )
+                if st.button("📋 Copier version lisible"):
+                    pyperclip.copy(readable_version)
+                    st.toast("Version lisible copiée!")
+
+            # Deuxième ligne : Barre de progression + indicateur
+            entropy = generator.calculate_entropy(st.session_state.password)
+            strength = min(100, int(entropy * 0.8))
+            
+            # Utilisation de columns avec des ratios ajustés
+            prog_col, text_col = st.columns([3, 1])
+            with prog_col:
+                st.progress(strength)
+            with text_col:
+                if strength > 80:
+                    st.markdown(f"<div style='text-align: right; color: green;'>{strength}% - Excellent</div>", unsafe_allow_html=True)
+                elif strength > 60:
+                    st.markdown(f"<div style='text-align: right; color: orange;'>{strength}% - Bon</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='text-align: right; color: red;'>{strength}% - Faible</div>", unsafe_allow_html=True)
+
+
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📋 Copier", use_container_width=True):
+                    st.session_state.copied = True
+                    st.rerun()
+            
+            with col2:
+                if st.button("🔍 Vérifier sécurité", use_container_width=True):
+                    st.session_state.verify_pwd = st.session_state.password
+                    st.session_state.selected_tab = "Vérification"
+                    st.rerun()
+            
+            with col3:
+                if st.button("⚡ Tester résistance", use_container_width=True):
+                    st.session_state.attack_pwd = st.session_state.password
+                    st.session_state.selected_tab = "Test de Résistance"
+                    st.rerun()
+            
+            if "copied" in st.session_state:
+                st.toast("Mot de passe copié!")
+                del st.session_state.copied
 
 elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
     st.title("🔐 Générateur ID + Mot de Passe")
@@ -651,14 +999,48 @@ elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
         }
     
     if "id_password" in st.session_state:
-        show_id_pwd = st.checkbox("Afficher le mot de passe", key="id_pwd_checkbox")
-        st.text_input(
-            "Mot de passe généré",
-            value=st.session_state.id_password["password"],
-            type="default" if show_id_pwd else "password",
-            key="id_pwd_display"
-        )
+        with st.container():
+            col1, col2 = st.columns(2)
+
+        with col1:
+                st.markdown("**Identifiant généré**")
+                st.code(st.session_state.id_password["identifier"], language="text")
+                
+                # Bouton de copie
+                if st.button("📋 Copier l'identifiant", key="copy_id"):
+                    pyperclip.copy(st.session_state.id_password["identifier"])
+                    st.toast("Identifiant copié!")
         
+        with col2:
+                show_pwd = st.checkbox("Afficher le mot de passe", key="id_pwd_checkbox")
+                st.markdown("**Mot de passe généré**")
+                st.text_input(
+                    "Mot de passe",
+                    value=st.session_state.id_password["password"],
+                    type="default" if show_pwd else "password",
+                    key="id_pwd_display",
+                    label_visibility="collapsed"
+                )
+
+                if st.checkbox("Afficher version lisible", key="show_readable_id"):
+                    readable_version = generator.create_readable_version(st.session_state.id_password["password"])
+                    st.text_area(
+                        "Version lisible",
+                        value=readable_version,
+                        key="readable_display_id",
+                        height=69
+                    )
+
+                if st.button("📋 Copier version lisible", key="copy_readable_id"):
+                    pyperclip.copy(readable_version)
+                    st.toast("Version lisible copiée!")
+
+                if st.button("📋 Copier le mot de passe", key="copy_pwd"):
+                    pyperclip.copy(st.session_state.id_password["password"])
+                    st.toast("Mot de passe copié!")
+            
+        # Boutons d'actions en dessous
+        st.divider()
         col1, col2 = st.columns(2)
         
         with col1:
@@ -673,38 +1055,34 @@ elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
                 st.session_state.selected_tab = "Test de Résistance"
                 st.rerun()
         
-        if "copied_id" in st.session_state:
-            st.toast("Identifiant copié!")
-            del st.session_state.copied_id
 
 elif st.session_state.get("selected_tab") == "Vérification":
     st.title("🔍 Vérification de Mot de Passe")
     
     if 'verify_pwd' not in st.session_state:
         st.session_state.verify_pwd = ""
-    
+        
     show_verify_pwd = st.checkbox("Afficher le mot de passe", key="verify_pwd_checkbox")
     password = st.text_input(
         "Mot de passe à vérifier",
         value=st.session_state.verify_pwd,
         type="default" if show_verify_pwd else "password",
         key="verify_pwd_input",
-        on_change=lambda: st.session_state.update({"verify_pwd": st.session_state.verify_pwd_input})
     )
-    
+
+    if password != st.session_state.verify_pwd:
+        st.session_state.verify_pwd = password
+  
     if st.button("🔍 Vérifier", use_container_width=True):
         if not st.session_state.verify_pwd:
             st.warning("Veuillez entrer un mot de passe à vérifier")
             st.stop()
         
-        if "verify_pwd" in st.session_state:
-            del st.session_state.verify_pwd
-        
         with st.spinner("Analyse en cours..."):
             tab1, tab2, tab3 = st.tabs(["Résumé", "Analyse", "Recommandations"])
             
             # Analyse locale
-            analysis = generator.analyze_password_structure(password)
+            score, analysis = generator.evaluate_password_strength(password)
             
             # Vérification HIBP
             hibp_result = generator.check_hibp_status(password)
@@ -807,17 +1185,15 @@ elif st.session_state.get("selected_tab") == "Vérification":
             
             with tab1:
                 st.subheader("Score de sécurité")
+
+                st.metric("", f"{score}/100")
                 
-                if score >= 80:
-                    st.success(f"Score: {score}/100 - Excellent")
-                elif score >= 60:
-                    st.warning(f"Score: {score}/100 - Bon")
-                elif score >= 40:
-                    st.warning(f"Score: {score}/100 - Moyen")
-                elif score >= 20:
-                    st.error(f"Score: {score}/100 - Faible")
+                if score >= 90:
+                    st.success("Excellent - Sécurité maximale")
+                elif score >= 75:
+                    st.warning("Bon - Peut encore être amélioré")
                 else:
-                    st.error(f"Score: {score}/100 - Dangereux")
+                    st.error("Faible - Changez immédiatement")
                 
                 st.progress(score)
                 
@@ -897,158 +1273,83 @@ elif st.session_state.get("selected_tab") == "Test de Résistance":
         st.session_state.attack_pwd = ""
     
     show_attack_pwd = st.checkbox("Afficher le mot de passe", key="attack_pwd_checkbox")
-    
-    password = st.text_input(
+    password_input = st.text_input(
         "Mot de passe à tester",
         value=st.session_state.attack_pwd,
         type="default" if show_attack_pwd else "password",
         key="attack_pwd_input"
     )
 
-    if password != st.session_state.attack_pwd:
-        st.session_state.attack_pwd = password
+    if password_input != st.session_state.attack_pwd:
+        st.session_state.attack_pwd = password_input
     
     attack_types = [
         ("Force Brute Simple", "bruteforce"),
         ("Dictionnaire Classique", "dictionary"),
-        ("Attaque par Motifs", "pattern"),
+        ("Attaque par Motifs", "pattern_attack"),
         ("Attaque Rainbow Table", "rainbow"),
-        ("Attaque Hybride", "hybrid"),
-        ("Credential Stuffing", "credstuff"),
-        ("Password Spraying", "spray"),
-        ("Analyse d'Entropie", "entropy")
+        ("Attaque Hybride", "hybrid_attack"),  
+        ("Credential Stuffing", "credential_stuffing"),  
+        ("Password Spraying", "password_spraying"),  
+        ("Analyse d'Entropie", "entropy_analysis") 
     ]
     
+    if 'selected_attacks' not in st.session_state:
+        st.session_state.selected_attacks = [attack[1] for attack in attack_types]
+
     cols = st.columns(4)
-    selected_attacks = []
+    current_selected = []
     
-    for i, (name, _) in enumerate(attack_types):
+    for i, (name, attack_id) in enumerate(attack_types):
         with cols[i % 4]:
-            if st.checkbox(name, key=f"attack_{i}", value=True):
-                selected_attacks.append(attack_types[i][1])
+            is_checked = st.checkbox(
+                name,
+                value=attack_id in st.session_state.selected_attacks,
+                key=f"attack_{attack_id}_checkbox"
+            )
+            if is_checked:
+                current_selected.append(attack_id)
     
+    # Mise à jour des attaques sélectionnées
+    st.session_state.selected_attacks = current_selected
+
     col1, col2 = st.columns(2)
     
     with col1:
         if st.button("⚡ Lancer le Test", use_container_width=True):
-            if not password:
+            if not st.session_state.attack_pwd:
                 st.warning("Veuillez entrer un mot de passe à tester")
                 st.stop()
             
-            if "attack_pwd" in st.session_state:
-                del st.session_state.attack_pwd
-            
-            if not selected_attacks:
+            if not st.session_state.selected_attacks:
                 st.warning("Veuillez sélectionner au moins un type d'attaque")
                 st.stop()
             
             with st.spinner("Simulation en cours..."):
                 results = []
-                for attack_type in selected_attacks:
+                for attack_type in st.session_state.selected_attacks:
                     try:
-                        if attack_type == "bruteforce":
-                            result = generator.simulate_bruteforce(password)
-                        elif attack_type == "dictionary":
-                            result = generator.simulate_dictionary(password)
-                        elif attack_type == "pattern":
-                            result = generator.simulate_pattern_attack(password)
-                        elif attack_type == "rainbow":
-                            result = generator.simulate_rainbow(password)
-                        elif attack_type == "hybrid":
-                            result = generator.simulate_hybrid_attack(password)
-                        elif attack_type == "credstuff":
-                            result = generator.simulate_credential_stuffing(password)
-                        elif attack_type == "spray":
-                            result = generator.simulate_password_spraying(password)
-                        elif attack_type == "entropy":
-                            result = generator.simulate_entropy_analysis(password)
-                        
+                        result = getattr(generator, f"simulate_{attack_type}")(st.session_state.attack_pwd)
                         results.append((attack_type, result))
                     except Exception as e:
                         results.append((attack_type, {"error": str(e)}))
                 
-                vulnerable_count = sum(1 for _, r in results if r.get("vulnerable", False))
-                
-                st.subheader("Résultats des tests")
-                
-                for attack_type, result in results:
-                    name = next(n for n, t in attack_types if t == attack_type)
-                    
-                    if "error" in result:
-                        st.error(f"{name}: Erreur - {result['error']}")
-                        continue
-                    
-                    if result.get("vulnerable", False):
-                        st.error(f"❌ {name}: Vulnérable")
-                        st.error(f"Raison: {result.get('reason', 'Non spécifié')}")
-                    else:
-                        st.success(f"✅ {name}: Sécurisé")
-                        if "strength" in result:
-                            st.info(f"{result['strength']}")
-                
-                st.subheader("Résumé")
-                st.write(f"{vulnerable_count} vulnérabilité(s) trouvée(s) sur {len(results)} tests")
-                
-                if vulnerable_count == 0:
-                    st.success("Votre mot de passe semble robuste contre toutes les attaques testées!")
-                else:
-                    st.error("Votre mot de passe présente des vulnérabilités. Veuillez choisir un autre mot de passe.")
-    
+                generator.display_attack_results(results, attack_types)
+
     with col2:
         if st.button("⚡ Tout Tester", use_container_width=True):
-            if not password:
+            if not st.session_state.attack_pwd:
                 st.warning("Veuillez entrer un mot de passe à tester")
                 st.stop()
-            
-            if "attack_pwd" in st.session_state:
-                del st.session_state.attack_pwd
             
             with st.spinner("Simulation complète en cours..."):
                 results = []
                 for name, attack_type in attack_types:
                     try:
-                        if attack_type == "bruteforce":
-                            result = generator.simulate_bruteforce(password)
-                        elif attack_type == "dictionary":
-                            result = generator.simulate_dictionary(password)
-                        elif attack_type == "pattern":
-                            result = generator.simulate_pattern_attack(password)
-                        elif attack_type == "rainbow":
-                            result = generator.simulate_rainbow(password)
-                        elif attack_type == "hybrid":
-                            result = generator.simulate_hybrid_attack(password)
-                        elif attack_type == "credstuff":
-                            result = generator.simulate_credential_stuffing(password)
-                        elif attack_type == "spray":
-                            result = generator.simulate_password_spraying(password)
-                        elif attack_type == "entropy":
-                            result = generator.simulate_entropy_analysis(password)
-                        
+                        result = getattr(generator, f"simulate_{attack_type}")(st.session_state.attack_pwd)
                         results.append((name, result))
                     except Exception as e:
                         results.append((name, {"error": str(e)}))
                 
-                vulnerable_count = sum(1 for _, r in results if r.get("vulnerable", False))
-                
-                st.subheader("Résultats des tests")
-                
-                for name, result in results:
-                    if "error" in result:
-                        st.error(f"{name}: Erreur - {result['error']}")
-                        continue
-                    
-                    if result.get("vulnerable", False):
-                        st.error(f"❌ {name}: Vulnérable")
-                        st.error(f"Raison: {result.get('reason', 'Non spécifié')}")
-                    else:
-                        st.success(f"✅ {name}: Sécurisé")
-                        if "strength" in result:
-                            st.info(f"{result['strength']}")
-                
-                st.subheader("Résumé")
-                st.write(f"{vulnerable_count} vulnérabilité(s) trouvée(s) sur {len(results)} tests")
-                
-                if vulnerable_count == 0:
-                    st.success("Votre mot de passe semble robuste contre toutes les attaques testées!")
-                else:
-                    st.error("Votre mot de passe présente des vulnérabilités. Veuillez choisir un autre mot de passe.")
+                generator.display_attack_results(results, attack_types, full_test=True)
+    

@@ -1,0 +1,57 @@
+name: Build VaultGen  
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      - name: Build EXE
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --icon=logo.ico vaultgen.py
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v3
+        with:
+          name: vaultgen-windows
+          path: dist/vaultgen.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install py2app
+          pip install -r requirements.txt
+
+      - name: Build APP
+        run: |
+          python3 setup.py py2app
+
+      - name: Upload APP
+        uses: actions/upload-artifact@v3
+        with:
+          name: vaultgen-macos
+          path: dist/VaultGen.app
