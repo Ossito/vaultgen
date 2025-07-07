@@ -1030,10 +1030,10 @@ elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
                         key="readable_display_id",
                         height=69
                     )
-
-                if st.button("📋 Copier version lisible", key="copy_readable_id"):
-                    pyperclip.copy(readable_version)
-                    st.toast("Version lisible copiée!")
+                    
+                    if st.button("📋 Copier version lisible", key="copy_readable_id"):
+                        pyperclip.copy(readable_version)  # Maintenant dans le même bloc
+                        st.toast("Version lisible copiée!")
 
                 if st.button("📋 Copier le mot de passe", key="copy_pwd"):
                     pyperclip.copy(st.session_state.id_password["password"])
