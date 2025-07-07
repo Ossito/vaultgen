@@ -900,9 +900,10 @@ if st.session_state.get("selected_tab", "Mot de Passe") == "Mot de Passe":
                     key="readable_display",
                     height=70
                 )
-                if st.button("📋 Copier version lisible"):
-                    pyperclip.copy(readable_version)
-                    st.toast("Version lisible copiée!")
+                if st.button("📋 Copier"):
+                    st.session_state.copied_text = st.session_state.password  
+                    st.code(st.session_state.copied_text, language="text") 
+                    st.toast("Sélectionnez le texte ci-dessus et copiez-le (Ctrl+C)")
 
             # Deuxième ligne : Barre de progression + indicateur
             entropy = generator.calculate_entropy(st.session_state.password)
@@ -943,6 +944,7 @@ if st.session_state.get("selected_tab", "Mot de Passe") == "Mot de Passe":
             if "copied" in st.session_state:
                 st.toast("Mot de passe copié!")
                 del st.session_state.copied
+
 
 elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
     st.title("🔐 Générateur ID + Mot de Passe")
@@ -1002,16 +1004,17 @@ elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
         with st.container():
             col1, col2 = st.columns(2)
 
-        with col1:
+            with col1:
                 st.markdown("**Identifiant généré**")
                 st.code(st.session_state.id_password["identifier"], language="text")
                 
-                # Bouton de copie
+                # Bouton de copie (méthode compatible cloud)
                 if st.button("📋 Copier l'identifiant", key="copy_id"):
-                    pyperclip.copy(st.session_state.id_password["identifier"])
-                    st.toast("Identifiant copié!")
-        
-        with col2:
+                    st.session_state.copied_id = st.session_state.id_password["identifier"]
+                    st.code(st.session_state.copied_id, language="text")
+                    st.toast("Sélectionnez l'identifiant ci-dessus et copiez-le (Ctrl+C)")
+            
+            with col2:
                 show_pwd = st.checkbox("Afficher le mot de passe", key="id_pwd_checkbox")
                 st.markdown("**Mot de passe généré**")
                 st.text_input(
@@ -1031,14 +1034,18 @@ elif st.session_state.get("selected_tab") == "ID + Mot de Passe":
                         height=69
                     )
                     
+                    # Bouton de copie (méthode compatible cloud)
                     if st.button("📋 Copier version lisible", key="copy_readable_id"):
-                        pyperclip.copy(readable_version)  # Maintenant dans le même bloc
-                        st.toast("Version lisible copiée!")
+                        st.session_state.copied_readable = readable_version
+                        st.code(st.session_state.copied_readable, language="text")
+                        st.toast("Sélectionnez la version lisible ci-dessus et copiez-la (Ctrl+C)")
 
+                # Bouton de copie du mot de passe (méthode compatible cloud)
                 if st.button("📋 Copier le mot de passe", key="copy_pwd"):
-                    pyperclip.copy(st.session_state.id_password["password"])
-                    st.toast("Mot de passe copié!")
-            
+                    st.session_state.copied_pwd = st.session_state.id_password["password"]
+                    st.code(st.session_state.copied_pwd, language="text")
+                    st.toast("Sélectionnez le mot de passe ci-dessus et copiez-le (Ctrl+C)")
+        
         # Boutons d'actions en dessous
         st.divider()
         col1, col2 = st.columns(2)
